@@ -1,0 +1,1143 @@
+---
+title: "Spatiotemporal Comparative Analysis of Dockless Vehicle Usage Patterns in Louisville, KY."
+author: " "
+date: "11/7/2019"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: united
+    code_folding: hide
+---
+
+##Executive Summary
+
+As the economy of Louisville, KY is accelerating, the city is innovating its transportation infrastructure at all dimensions. In response to the "Move Louisville" transportation project that has been implemented since 2016, we seek to recommend transportation projects that will 1) reduce vehicle miles traveled, 2) preserve existing streets and sidewalks, 3) provide better connectivity and real options for travel. 
+
+Like most American cities, one of the most cost-effective methods to reduce vehicle miles traveled in Louisville is to build dockless vehicle systems such as bike-share systems and e-scooter services. One of the big operational challenges of these shared systems is “re-balancing” - getting scooters to stations that are anticipated to have demand but lack scooters. Figuring out how to do this is one of the keys to operating a successful system in Louisville.
+
+We have designed a smart city solution that will help shift short trips away from cars and forecast scooter demands in most stations in Louisville in response to the "rebalancing" problem. We proposed a prediction model that takes 3 steps to complete:
+
+1) Clean, Explore, Visualize the data as needed to find out scooter usage patterns in Louisville.
+2) Build, Run, and Evaluate a Predictive Model that will forecast the supply and demand of shared scooters. 
+3) Discuss the insights drawn from the model and how scooter operaters may leverage them to better get scooters to stations.
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(riem)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(RSocrata)
+library(data.table)
+library(ggrepel)
+
+plotTheme <- theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  #panel.border=element_rect(colour="#F0F0F0"),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.2),
+  axis.ticks=element_blank())
+
+mapTheme <- theme(plot.title =element_text(size=12),
+                  plot.subtitle = element_text(size=8),
+                  plot.caption = element_text(size = 6),
+                  axis.line=element_blank(),
+                  axis.text.x=element_blank(),
+                  axis.text.y=element_blank(),
+                  axis.ticks=element_blank(),
+                  axis.title.x=element_blank(),
+                  axis.title.y=element_blank(),
+                  panel.background=element_blank(),
+                  panel.border=element_blank(),
+                  panel.grid.major=element_line(colour = 'transparent'),
+                  panel.grid.minor=element_blank(),
+                  legend.direction = "vertical", 
+                  legend.position = "right",
+                  plot.margin = margin(1, 1, 1, 1, 'cm'),
+                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+
+mapTheme2 <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2)
+  )
+}
+
+mapTheme3 <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2)
+  )
+}
+
+palette5 <- c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c")
+palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
+palette2 <- c("#6baed6","#08519c")
+```
+
+##Pedestrain Network
+
+Increasing use of alternative transportation modes and acheiving the corresponding health improvements requires providing more options for short trips. A network of extensive yet inexpensive and relatively easy-to-implement dockless vehicle facilities- connected to transit - in the downtown and the central neighborhoods is a logical first step. A strong, connected core network also will support the success of the city’s dockless vehicles share program.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#if(!requireNamespace("devtools")) install.packages("devtools")
+#devtools::install_github("dkahle/ggmap", ref = "tidyup", force=TRUE)
+library("ggmap")
+#citation("ggmap")
+ggmap::register_google(key = "AIzaSyBCq2wrXoVXnzy5BY6QmEbBn2cW7DfyUVs")
+
+louisville <- c(left = -85.9, bottom =38.15, right =  -85.55, top = 38.3)
+get_stamenmap(louisville, zoom = 12, maptype = "toner-lite") %>% ggmap()  +
+  labs(title="Pedestrain Network in Lousiville. May - Aug, 2019") +
+  theme(legend.position="bottom") 
+```
+
+##Dockless Vehicle Data
+
+Here we have data about all dockless (scooter and bike) trips across the city from all providers including Bird, Lime, Spin, etc. I will provide a brief variable description of the dockless vehicle data:
+
+**TripID**  - a unique ID created by Louisville Metro 
+
+**StartDate** - in YYYY-MM-DD format
+
+**StartTime** - rounded to the nearest 15 minutes in HH:MM format
+
+**EndDate** - in YYYY-MM-DD format
+
+**EndTime** - rounded to the nearest 15 minutes in HH:MM format
+
+**TripDuration** - duration of the trip minutes
+
+**TripDistance** - distance of trip in miles based on company route data
+
+**StartLatitude** - rounded to nearest 3 decimal places
+
+**StartLongitude** - rounded to nearest 3 decimal places
+
+**EndLatitude** - rounded to nearest 3 decimal places
+
+**EndLongitude** - rounded to nearest 3 decimal places
+
+**DayOfWeek** - 1-7 based on date, 1 = Sunday through 7 = Saturday, useful for analysis
+
+**HourNum** - the hour part of the time from 0-24 of the StartTime, useful for analysis
+
+```{r, echo=TRUE, collapse = TRUE}
+dockless <- read_csv('/Users/zixiliu/Downloads/DocklessTripOpenData_7.csv')
+dockless <- dockless %>% filter(is.na(StartDate)==FALSE) %>% 
+                         filter(is.na(StartTime)==FALSE) %>% 
+                         filter(is.na(EndDate)==FALSE) %>% 
+                         filter(is.na(EndTime)==FALSE) %>%
+                         filter(is.na(StartLatitude )==FALSE) %>%
+                         filter(is.na(StartLongitude )==FALSE)%>%
+                         filter(is.na(EndLatitude )==FALSE)%>%
+                         filter(is.na(EndLongitude )==FALSE)
+     
+#library(DT)
+#datatable(dockless, 
+#          options = list(pageLength = 5, 
+#                         scrollX = TRUE))
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+service = st_read("/Users/zixiliu/Downloads/Dockless Vehicle Distribution Zones v2/Dockless_Vehicle_Distribution_Zones.shp")%>%st_transform(4326)
+dockless = st_join(dockless %>% 
+          st_as_sf(., coords = c("StartLongitude", "StartLatitude"), crs = 4326) ,
+        service %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) 
+dockless <- dockless %>% mutate(StartLongitude = unlist(map(geometry, 1)),
+         StartLatitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)%>% filter(is.na(Pl2040Area)==FALSE)
+```
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+m <- dockless%>% group_by(Pl2040Area) %>% tally()
+mm <- merge(m,service,by = "Pl2040Area")
+mm <- st_as_sf(mm) %>% st_transform(crs=4326)
+#install.packages("tmap")
+library(tmap)
+tm_shape(mm) + tm_polygons(col='n', title = "Dockless Vehicle Usage by Service Region, May - Aug 2019", palette = "Spectral") + tm_style_classic() + tm_text( "Pl2040Area",size=0.8) +tm_scale_bar(position = c("right", "top"))
+```
+
+We want to make sure we have cleaned all the NAs.
+
+```{r}
+any(is.na(dockless))
+```
+
+We then further clean the data outliers and filter data from May, 2019 to Aug, 2019.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+dockless <- dockless %>% filter(TripDistance <= 40 & TripDistance > 0 ) %>%
+  filter(StartDate >= "2019-05-01" & StartDate <= "2019-08-31") %>% 
+  filter(StartLatitude < 38.75 & StartLatitude > 37.75 ) %>% 
+  filter(EndLatitude < 38.75 & EndLatitude > 37.75) %>% 
+  filter(StartLongitude > -86.36 & StartLongitude < -85.16) %>% 
+  filter(EndLongitude > -86.36 & EndLongitude < -85.16) %>% 
+  filter(TripDuration > 0 & TripDuration < 480)
+```
+
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+dockless$StartInterval <- as.POSIXct(strptime(paste(dockless$StartDate,dockless$StartTime),"%Y-%m-%d %H:%M:%S"))
+
+dockless <- dockless %>% mutate(interval60 = floor_date(ymd_hms(StartInterval), unit = "hour"),
+         interval15 = floor_date(ymd_hms(StartInterval), unit = "15 mins"),
+         week = week(StartInterval))
+
+dockless$DayOfWeek <- ordered(dockless$DayOfWeek, levels = 1:7,
+                              labels = c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")) 
+dockless$HourNum <- as.numeric(dockless$HourNum)
+glimpse(dockless)
+```
+
+##Exploratory Data Analysis
+
+There is a lot that we can explore in this data pertaining to scooter usage patterns in Louisville.
+
+What is the distribution of scooter trip counts in Louisville by day of week?
+What is the distribution of scooter trip counts in Louisville by weekday and weekends?
+If we break down the data into service regions, what is the distribution of scooter usage in each region?
+I will explore these points one by one.
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ggplot(dockless)+
+     geom_freqpoly(aes(HourNum, color = DayOfWeek),  stat = "count",binwidth = 1)+
+  labs(title="Dockless Vehicle Trips in Louisville, by day of the week, May - Aug 2019",
+       x="Hour", 
+       y="Trip Counts")+
+     plotTheme
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ggplot(dockless %>% 
+         mutate(weekend = ifelse(DayOfWeek %in% c("Sun", "Sat"), "Weekend", "Weekday")))+
+     geom_freqpoly(aes(HourNum, color = weekend), binwidth = 1)+
+  labs(title="Dockless Vehicle Trips in Louisville, weekend vs weekday, May - Aug 2019",
+       x="Hour", 
+       y="Trip Counts")+
+     plotTheme
+```
+
+In general, there is more scooter usage on weekends than on weekdays and more demand in the afternoon from 14 - 20 pm than in other time periods.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+df <- dockless %>% group_by(Pl2040Area, DayOfWeek) %>% tally()
+gp <- ggplot(df) 
+
+gp + geom_bar(aes(x=DayOfWeek, y = n), stat= "identity") +
+  facet_wrap(~ Pl2040Area,ncol = 3) +
+  labs(x="Day Of Week", 
+       y="Trip Counts") +
+  ggtitle(label = "Trip Counts by Day of Week, Per Service Region") 
+```
+
+
+We can see that three service regions, Downtown has the most scooter usage, followed by University and Southeast Core. In Downtown, we have more scooter usage on weekends than on weekdays; whereas in University, there are more scooter usage on weekdays. This is probably because people use scooters to commute to school from Mon - Fri in University and use scooters to explore the city in downtown areas on weekends.
+
+This implies our data is imbalanced in terms of its location and and we may want to build seperate prediction models for Downtown and University.
+
+We then visualize distribution of scooter trips in Louisville by time of day on Google Map.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#if(!requireNamespace("devtools")) install.packages("devtools")
+#devtools::install_github("dkahle/ggmap", ref = "tidyup", force=TRUE)
+library("ggmap")
+#citation("ggmap")
+ggmap::register_google(key = "AIzaSyBCq2wrXoVXnzy5BY6QmEbBn2cW7DfyUVs")
+
+louisville <- c(left = -85.9, bottom =38.15, right =  -85.55, top = 38.3)
+get_stamenmap(louisville, zoom = 12, maptype = "toner-lite") %>% ggmap() + 
+  geom_point(aes(x = StartLongitude, y = StartLatitude,  colour = time_of_day), data = dockless %>%
+        mutate(time_of_day = case_when(HourNum < 7 | HourNum > 19 ~ "Overnight",
+                                 HourNum >= 7 & HourNum < 10 ~ "AM Rush",
+                                 HourNum >= 10 & HourNum < 15 ~ "Mid-Day",
+                                 HourNum >= 15 & HourNum <= 19 ~ "PM Rush")), size = 0.3) +
+  labs(title="Dockless Vehicle Trips by Start Station in Lousiville. May - Aug, 2019") +
+  theme(legend.position="bottom") 
+```
+ @Article{,
+    author = {David Kahle and Hadley Wickham},
+    title = {ggmap: Spatial Visualization with ggplot2},
+    journal = {The R Journal},
+    year = {2013},
+    volume = {5},
+    number = {1},
+    pages = {144--161},
+    url = {https://journal.r-project.org/archive/2013-1/kahle-wickham.pdf},
+  }
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ggplot(dockless %>%
+         group_by(interval60) %>%
+         tally())+
+  geom_line(aes(x = interval60, y = n))+
+  labs(title="Dockless Vehicle share trips per hr. Louisville, May - Aug, 2019",
+       x="Date", 
+       y="Number of trips")+
+  plotTheme
+```
+
+###Weather Data
+
+We import and visualize the weather data collect at Louisville International Airport from May-Aug, 2019. 
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+
+weather.Panel <- 
+  riem_measures(station = "SDF", date_start = "2019-05-01", date_end = "2019-08-31") %>%
+  replace(is.na(.), 0) %>%
+    mutate(interval60 = ymd_h(substr(valid,1,13))) %>%
+    mutate(week = week(interval60),
+           DayOfWeek = wday(interval60)) %>%
+    group_by(interval60) %>%
+    summarize(Temperature = max(tmpf),
+              Precipitation = sum(p01i),
+              Wind_Speed = max(sknt),
+              Visibility = max(vsby)) %>%
+    mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+glimpse(weather.Panel)
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+grid.arrange(
+  ggplot(weather.Panel, aes(interval60,Precipitation)) + geom_line() + 
+  labs(title="Percipitation", x="Hour", y="Perecipitation") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Wind_Speed)) + geom_line() + 
+    labs(title="Wind Speed", x="Hour", y="Wind Speed") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Temperature)) + geom_line() + 
+    labs(title="Temperature", x="Hour", y="Temperature") + plotTheme,
+  ggplot(weather.Panel, aes(interval60,Temperature)) + geom_line() + 
+    labs(title="Visibility", x="Hour", y="Visibility") + plotTheme,
+  top="Weather Data - Louisville SDF - May - Aug, 2018")
+```
+
+##Census Data
+
+Census data are used to test generalizeability of model later.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+LouisvilleCensus <- 
+  get_acs(geography = "tract", 
+          variables = c("B01003_001", "B19013_001", 
+                        "B02001_002", "B08013_001",
+                        "B08012_001", "B08301_001", 
+                        "B08301_010", "B01002_001"), 
+          year = 2017, 
+          state = "KY", 
+          geometry = TRUE, 
+          county=c("Jefferson"),
+          output = "wide") %>%
+  rename(Total_Pop =  B01003_001E,
+         Med_Inc = B19013_001E,
+         Med_Age = B01002_001E,
+         White_Pop = B02001_002E,
+         Travel_Time = B08013_001E,
+         Num_Commuters = B08012_001E,
+         Means_of_Transport = B08301_001E,
+         Total_Public_Trans = B08301_010E) %>%
+  select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
+         Means_of_Transport, Total_Public_Trans,
+         Med_Age,
+         GEOID, geometry) %>%
+  mutate(Percent_White = White_Pop / Total_Pop,
+         Mean_Commute_Time = Travel_Time / Total_Public_Trans,
+         Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
+
+LouisvilleTracts <- 
+  LouisvilleCensus %>%
+  as.data.frame() %>%
+  distinct(GEOID, .keep_all = TRUE) %>%
+  select(GEOID, geometry) %>% 
+  st_sf
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#dockless = dockless%>% select(-"StartInterval")
+dat_census <- st_join(dockless %>% 
+          filter(is.na(StartLongitude) == FALSE &
+                   is.na(StartLatitude) == FALSE &
+                   is.na(EndLongitude) == FALSE &
+                   is.na(EndLatitude) == FALSE) %>%
+          st_as_sf(., coords = c("StartLongitude", "StartLatitude"), crs = 4326),
+        LouisvilleTracts %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) %>%
+  rename(Origin.Tract = GEOID) %>%
+  mutate(StartLongitude = unlist(map(geometry, 1)),
+         StartLatitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)%>%
+  st_as_sf(., coords = c("EndLongitude", "EndLatitude"), crs = 4326) %>%
+  st_join(., LouisvilleTracts %>%
+            st_transform(crs=4326),
+          join=st_intersects,
+          left = TRUE) %>%
+  rename(Destination.Tract = GEOID)  %>%
+  mutate("EndLongitude" = unlist(map(geometry, 1)),
+         "EndLatitude" = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry) 
+```
+
+##Preprocessing
+
+Use One-Hot Encoding to create variable for weekday/ weekend.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+dat_census <- dat_census %>% mutate(weekend = ifelse(DayOfWeek %in% c("Sun", "Sat"), 1, 0))
+```
+
+We create a fishnet for Louisville. Since the scooter usage location data in Louisville is sparse, we decide to aggregate some stations by creating a fishnet.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+Boundary <- st_read("https://opendata.arcgis.com/datasets/70b8b06af5a2470d9d6a9037bac00c4b_0.geojson") %>%
+  st_transform(crs=102271)  %>% filter(COUNTY %in% c("JEFFERSON"))
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+fishnet <- 
+  st_make_grid(Boundary, cellsize = 1000) %>%
+  st_sf()
+```
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+fishnet <- 
+  fishnet[Boundary,] %>%
+  st_transform(4326)%>%
+  mutate(uniqueID = rownames(.)) %>%
+  dplyr::select(uniqueID)
+
+ggplot() +
+  geom_sf(data=fishnet) +
+  labs(title = "Fishnet in Louisville") +
+  mapTheme2()
+```
+
+Join the fishnet to our data.
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+dat_census <- st_join(dat_census %>% st_as_sf(., coords = c("StartLongitude", "StartLatitude"), crs = 4326),fishnet,join = st_intersects) %>%
+  mutate(StartLongitude = unlist(map(geometry, 1)),
+         StartLatitude = unlist(map(geometry, 2)))
+```
+
+Create dummy variables for service regions.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#install.packages("fastDummies")
+library(fastDummies)
+dat_census <- fastDummies::dummy_cols(dat_census, select_columns = "Pl2040Area")
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+LandUse <- st_read("https://opendata.arcgis.com/datasets/3e5bd9a4b6ed42339cd458fddfd7ca50_6.geojson") %>%
+  st_transform(crs=4326)
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+length(unique(dat_census$interval60)) * length(unique(dat_census$uniqueID))
+```
+
+##Downtown
+
+Then we want to take a closer look at scooter usage in Downtown.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+dat_D <- dat_census[which(dat_census$Pl2040Area=="Downtown"),]
+```
+
+
+We want to make sure each unique station and hour/day combo exists in our data set. This is done in order to create a “panel” (e.g. a time-series) data set where each time period in the study is represented by a row - whether an observation took place then or not. So if a station didn’t have any trips originating from it at a given hour, we still need a zero in that spot in the panel.
+
+We start by determining the maximum number of combinations.
+
+Then we compare that to the actual number of combinations. We create an empty data frame study.panel, is created that has each unique space/time observations. This is done using the expand.grid function and unique. Along the way, we keep tabs on the number of rows our data have - nrow shows that the count is still correct.
+
+We then join the station name, tract and lat/lon (some have multiple lat lon info, so we just take the first one of each using group_by and slice).
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+study.panel_D <- 
+  expand.grid(interval60=unique(dat_D$interval60), 
+              uniqueID = unique(dat_D$uniqueID)) %>%
+  left_join(., dat_D %>%
+              select( uniqueID, Origin.Tract,StartLongitude, StartLatitude)  %>%
+              group_by(uniqueID) %>%
+              slice(1))
+
+nrow(study.panel_D)  
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+length(unique(dat_D$interval60)) * length(unique(dat_D$uniqueID))
+```
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#study.panel_D<- study.panel_D %>% select(-geometry)
+dat_D <- dat_D %>%as.data.frame() 
+
+ride.panel_D <- 
+  dat_D %>%
+  mutate(Trip_Counter = 1) %>%
+  right_join(study.panel_D) %>% 
+  group_by(interval60, uniqueID, Origin.Tract, StartLatitude, StartLongitude) %>%
+  summarize(Trip_Count = sum(Trip_Counter, na.rm=T), weekend = sum(weekend,na.rm=T)) %>%
+  mutate(weekend = ifelse(weekend > 0, 1, 0)) %>%
+  left_join(weather.Panel) %>%
+  filter(is.na(Temperature)==FALSE) %>%
+  ungroup() %>%
+  filter(is.na(uniqueID) == FALSE) %>%
+  mutate(week = week(interval60),
+         DayOfWeek = wday(interval60))
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.panel_D <- st_join(ride.panel_D %>% st_as_sf(., coords = c("StartLongitude", "StartLatitude"), crs = 4326),LandUse,join = st_intersects) %>% 
+  mutate(StartLongitude = unlist(map(geometry, 1)),
+         StartLatitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)
+```
+
+
+These activity patterns were then further analyzed by splitting trips based on land use. By separating the temporal usage patterns in this way, I can gain a better understanding of potential trip purpose.
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+df_D <- ride.panel_D %>% mutate(DayOfWeek = ordered(DayOfWeek, levels = 1:7,
+                              labels = c("Mon","Tue","Wed","Thu","Fri","Sat","Sun"))) %>%           group_by(LANDUSE_NAME, DayOfWeek) %>% tally()
+gp_D <- ggplot(df_D) 
+
+gp_D + geom_bar(aes(x=DayOfWeek, y = n), stat= "identity") +
+  facet_wrap(~ LANDUSE_NAME,ncol=3) +
+  labs(x="Day Of Week", 
+       y="Trip Counts") +
+  ggtitle(label = "Trip Counts by Day of Week, by Land Use") 
+```
+
+We can see that commercial and public and semi-public areas have most of scooter usage. 
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.panel_D <- 
+  ride.panel_D %>% 
+  arrange(interval60,uniqueID) %>% 
+  mutate(lagHour = dplyr::lag(Trip_Count,1),
+         lag2Hours = dplyr::lag(Trip_Count,2),
+         lag3Hours = dplyr::lag(Trip_Count,3),
+         lag4Hours = dplyr::lag(Trip_Count,4),
+         lag12Hours = dplyr::lag(Trip_Count,12),
+         lag1day = dplyr::lag(Trip_Count,24)) %>%
+   mutate(day = yday(interval60))
+```
+
+```{r, echo=TRUE, collapse = TRUE}
+as.data.frame(ride.panel_D) %>%
+    na.omit() %>%
+    group_by(interval60) %>% 
+    summarise_at(vars(starts_with("lag"), "Trip_Count"), mean, na.rm = TRUE) %>%
+    gather(Variable, Value, -interval60, -Trip_Count) %>%
+    mutate(Variable = factor(Variable, levels=c("lagHour","lag2Hours","lag3Hours","lag4Hours",
+                                                "lag12Hours","lag1day")))%>%
+    group_by(Variable) %>%  
+    summarize(correlation = round(cor(Value, Trip_Count),2))
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+
+ride.Train_D <- filter(ride.panel_D, week <= 32)
+ride.Test_D <- filter(ride.panel_D, week > 32)
+
+```
+
+```{r, echo=TRUE, collapse = TRUE, warning = FALSE,  message=FALSE}
+reg1 <- 
+  lm(Trip_Count ~  hour(interval60) + weekend + Temperature + Wind_Speed + Visibility + Precipitation,  data=ride.Train_D)
+
+reg2 <- 
+  lm(Trip_Count ~  as.character(uniqueID) + weekend + Temperature + Wind_Speed + Visibility + Precipitation,  data=ride.Train_D)
+
+reg3 <- 
+  lm(Trip_Count ~  as.character(uniqueID)  + hour(interval60) + weekend + Temperature + Wind_Speed + Visibility + Precipitation , 
+     data=ride.Train_D)
+
+reg4 <- 
+  lm(Trip_Count ~ as.character(uniqueID) +  hour(interval60) + weekend  + Temperature + Wind_Speed + Visibility + Precipitation +  LANDUSE_NAME,
+     data=ride.Train_D)
+
+reg5 <- 
+  lm(Trip_Count ~ as.character(uniqueID) +  hour(interval60) + weekend  + Temperature + Wind_Speed + Visibility + Precipitation + lagHour + lag2Hours + lag3Hours + lag4Hours + lag12Hours + lag1day +  LANDUSE_NAME,
+     data=ride.Train_D)
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.Test.weekNest_D <- 
+  ride.Test_D %>%
+  nest(-week)
+
+model_pred <- function(dat, fit){
+   pred <- predict(fit, newdata = dat)}
+```
+```{r}
+week_predictions_D <- 
+  ride.Test.weekNest_D %>% 
+    mutate(ATime_FE = map(.x = data, fit = reg1, .f = model_pred),
+           BSpace_FE = map(.x = data, fit = reg2, .f = model_pred),
+           CTime_Space_FE = map(.x = data, fit = reg3, .f = model_pred),
+           DTime_Space_FE_LandUse = map(.x = data, fit = reg4, .f = model_pred),
+           ETime_Space_FE_timeLags = map(.x = data, fit = reg5, .f = model_pred)) %>% 
+    gather(Regression, Prediction, -data, -week) %>%
+    mutate(Observed = map(data, pull, Trip_Count),
+           Absolute_Error = map2(Observed, Prediction,  ~ abs(.x - .y)),
+           MAE = map_dbl(Absolute_Error, mean, na.rm = TRUE),
+           sd_AE = map_dbl(Absolute_Error, sd, na.rm = TRUE))
+
+week_predictions_D
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions_D %>%
+  dplyr::select(week, Regression, MAE) %>%
+  gather(Variable, MAE, -Regression, -week) %>%
+  ggplot(aes(week, MAE)) + 
+    geom_bar(aes(fill = Regression), position = "dodge", stat="identity") +
+    scale_fill_manual(values = palette5) +
+    labs(title = "Mean Absolute Errors by model specification and week, Downtown") +
+  plotTheme
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions_D %>% 
+    mutate(interval60 = map(data, pull, interval60),
+             uniqueID = map(data, pull,  uniqueID)) %>%
+    dplyr::select(interval60, uniqueID, Observed, Prediction, Regression) %>%
+    unnest() %>%
+    gather(Variable, Value, -Regression, -interval60, - uniqueID) %>%
+    group_by(Regression, Variable, interval60) %>%
+    summarize(Value = sum(Value)) %>%
+    ggplot(aes(interval60, Value, colour=Variable)) + 
+      geom_line(size = 1.1) + 
+      facet_wrap(~Regression, ncol=1) +
+      labs(title = "Predicted/Observed bike share time series", subtitle = "Boston; A test set of 2 weeks",  x = "Hour", y= "Station Trips") +
+      plotTheme
+```
+
+Then we want to perform prediction for all stations in Louisville and create a study panel.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+study.panel <- 
+  expand.grid(interval60=unique(dat_census$interval60), 
+              uniqueID = unique(dat_census$uniqueID)) %>%
+  left_join(., dat_census %>%
+              select( uniqueID, StartLongitude, StartLatitude)  %>%
+              group_by(uniqueID) %>%
+              slice(1))
+
+nrow(study.panel)  
+```
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+#study.panel<- study.panel%>% select(-geometry)
+dat_census <- dat_census %>%as.data.frame() 
+
+ride.panel <- 
+  dat_census %>%
+  mutate(Trip_Counter = 1) %>% 
+  right_join(study.panel) %>% 
+  group_by(interval60, uniqueID, StartLatitude, StartLongitude) %>%
+  summarize(Trip_Count = sum(Trip_Counter, na.rm=T), 
+            weekend = sum(weekend,na.rm=T), 
+            Pl2040Area_Downtown = sum(Pl2040Area_Downtown,na.rm=T),
+            Pl2040Area_University = sum(Pl2040Area_University,na.rm=T)) %>%
+  mutate(weekend = ifelse(weekend > 0, 1, 0),
+         Pl2040Area_Downtown = ifelse(Pl2040Area_Downtown > 0, 1, 0),
+         Pl2040Area_University = ifelse(Pl2040Area_University > 0, 1, 0)) %>%
+  left_join(weather.Panel) %>%
+  ungroup() %>%
+  mutate(week = week(interval60),
+         DayOfWeek = wday(interval60))
+
+```
+
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.panel <- 
+  ride.panel %>% 
+  arrange(interval60,uniqueID) %>% 
+  mutate(lagHour = dplyr::lag(Trip_Count,1),
+         lag2Hours = dplyr::lag(Trip_Count,2),
+         lag3Hours = dplyr::lag(Trip_Count,3),
+         lag4Hours = dplyr::lag(Trip_Count,4),
+         lag12Hours = dplyr::lag(Trip_Count,12),
+         lag1day = dplyr::lag(Trip_Count,24)) %>%
+   mutate(day = yday(interval60))
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+as.data.frame(ride.panel) %>%
+    group_by(interval60) %>% 
+    summarise_at(vars(starts_with("lag"), "Trip_Count"), mean, na.rm = TRUE) %>%
+    gather(Variable, Value, -interval60, -Trip_Count) %>%
+    mutate(Variable = factor(Variable, levels=c("lagHour","lag2Hours","lag3Hours","lag4Hours",
+                                                "lag12Hours","lag1day")))%>%
+    group_by(Variable) %>% 
+    summarize(correlation = round(cor(Value, Trip_Count),2))
+```
+
+##Anomaly Detection
+
+Here we use k-means and hierarchical clustering to detect anomaly. We may remove some anomalies it they affect our prediction results, but we will keep them for now.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+ride.panel2 <- na.omit(ride.panel)
+ride.panel2 <- ride.panel2 %>% mutate(hour = hour(interval60)) 
+ride.panel2 <- ride.panel2%>% select("uniqueID","Trip_Count","Temperature","Precipitation","Wind_Speed","Visibility") %>% group_by(uniqueID) %>% summarize(count = sum(Trip_Count),tem=mean(Temperature),per = mean(Precipitation),vis = mean(Visibility),wid = mean(Wind_Speed))
+ride.panel2 <- data.frame(ride.panel2, row.names = "uniqueID")
+ride.panel2 <- scale(ride.panel2)
+#head(ride.panel2)
+k2 <- kmeans(ride.panel2, centers = 4, nstart = 25)
+str(k2)
+```
+```{r}
+fviz_cluster(k2, data = ride.panel2)
+```
+
+Plot the obtained dendrogram.
+
+```{r}
+# Dissimilarity matrix
+d <- dist(ride.panel2, method = "euclidean")
+
+# Hierarchical clustering using Complete Linkage
+hc1 <- hclust(d, method = "complete" )
+
+# Plot the obtained dendrogram
+plot(hc1, cex = 0.6, hang = -1)
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.panel <- st_join(ride.panel %>% 
+          filter(is.na(StartLongitude) == FALSE &
+                   is.na(StartLatitude) == FALSE ) %>%
+          st_as_sf(., coords = c("StartLongitude", "StartLatitude"), crs = 4326),
+        LouisvilleTracts %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) %>%
+  rename(Origin.Tract = GEOID) %>%
+  mutate(StartLongitude = unlist(map(geometry, 1)),
+         StartLatitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)
+
+ride.panel <- 
+  left_join(ride.panel, LouisvilleCensus %>%
+              as.data.frame() %>%
+              select(-geometry), by = c("Origin.Tract" = "GEOID"))
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.Train <- filter(ride.panel, week <= 32)
+ride.Test <- filter(ride.panel, week > 32)
+```
+
+##Prediction Model
+
+```{r, echo=TRUE, collapse = TRUE, warning = FALSE, message=FALSE}
+reg1 <- 
+  lm(Trip_Count ~  hour(interval60) + weekend + Temperature + Wind_Speed + Visibility + Precipitation,  data=ride.Train)
+
+reg2 <- 
+  lm(Trip_Count ~  as.character(uniqueID) + weekend + Temperature + Wind_Speed + Visibility + Precipitation,  data=ride.Train)
+
+reg3 <- 
+  lm(Trip_Count ~  as.character(uniqueID)  + hour(interval60) + weekend + Temperature + Wind_Speed + Visibility + Precipitation + Pl2040Area_Downtown + Pl2040Area_University, 
+     data=ride.Train)
+
+reg4 <- 
+  lm(Trip_Count ~ as.character(uniqueID) +  hour(interval60) + DayOfWeek + Temperature + Wind_Speed + Visibility + Precipitation + lagHour + lag2Hours + lag3Hours + lag4Hours + lag12Hours + lag1day + Pl2040Area_Downtown + Pl2040Area_University,
+     data=ride.Train)
+
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+ride.Test.weekNest <- 
+  ride.Test %>%
+  nest(-week)
+
+model_pred <- function(dat, fit){
+   pred <- predict(fit, newdata = dat)}
+```
+
+```{r}
+week_predictions <- 
+  ride.Test.weekNest %>% 
+    mutate(ATime_FE = map(.x = data, fit = reg1, .f = model_pred),
+           BSpace_FE = map(.x = data, fit = reg2, .f = model_pred),
+           CTime_Space_FE = map(.x = data, fit = reg3, .f = model_pred),
+           DTime_Space_FE_timeLags = map(.x = data, fit = reg4, .f = model_pred)) %>% 
+    gather(Regression, Prediction, -data, -week) %>%
+    mutate(Observed = map(data, pull, Trip_Count),
+           Absolute_Error = map2(Observed, Prediction,  ~ abs(.x - .y)),
+           MAE = map_dbl(Absolute_Error, mean, na.rm = TRUE),
+           sd_AE = map_dbl(Absolute_Error, sd, na.rm = TRUE))
+
+week_predictions
+
+```
+
+##Examine Error Metrics
+
+The best models - the time-space model and the lag models, are accurate to less than an average of one ride per hour, at a glance, that’s pretty alright for overall accuracy.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>%
+  dplyr::select(week, Regression, MAE) %>%
+  gather(Variable, MAE, -Regression, -week) %>%
+  ggplot(aes(week, MAE)) + 
+    geom_bar(aes(fill = Regression), position = "dodge", stat="identity") +
+    scale_fill_manual(values = palette5) +
+    labs(title = "Mean Absolute Errors by model specification and week") +
+  plotTheme
+```
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+             uniqueID = map(data, pull,  uniqueID)) %>%
+    dplyr::select(interval60, uniqueID, Observed, Prediction, Regression) %>%
+    unnest() %>%
+    gather(Variable, Value, -Regression, -interval60, - uniqueID) %>%
+    group_by(Regression, Variable, interval60) %>%
+    summarize(Value = sum(Value)) %>%
+    ggplot(aes(interval60, Value, colour=Variable)) + 
+      geom_line(size = 1.1) + 
+      facet_wrap(~Regression, ncol=1) +
+      labs(title = "Predicted/Observed scooter share time series", subtitle = "Louisville; A test set of 3 weeks",  x = "Hour", y= "Station Trips") +
+      plotTheme
+```
+
+##Space-Time Error Evaluation
+
+Moving forward, let’s stick with reg3, which seems to have the best goodness of fit generally.
+
+We can look at our mean absolute errors by station - there seems to be a spatial pattern to our error, but we need to go a bit further to get at the temporal element of the error.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+            uniqueID = map(data, pull,  uniqueID), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude)) %>%
+    select(interval60,  uniqueID, StartLatitude, StartLongitude, Observed, Prediction, Regression) %>%
+    unnest() %>%
+  filter(Regression == "CTime_Space_FE") %>%
+  group_by( uniqueID, StartLongitude, StartLatitude) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+ggplot(.)+
+  geom_sf(data = LouisvilleCensus, color = "grey", fill = "transparent")+
+  geom_point(aes(x = StartLongitude, y = StartLatitude, color = MAE), 
+             fill = "transparent", alpha = 0.6)+
+  scale_colour_viridis(direction = -1,
+  discrete = FALSE, option = "D")+
+  ylim(min(dat_census$StartLatitude), max(dat_census$StartLatitude))+
+  xlim(min(dat_census$StartLongitude), max(dat_census$StartLongitude))+
+  labs(title="Mean Abs Error, Test Set, Model 3")+
+  mapTheme
+
+```
+
+
+
+If we plot observed vs. predicted for different times of day during the week and weekend, some patterns begin to emerge.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek)) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression, DayOfWeek) %>%
+    unnest() %>%
+  filter(Regression == "CTime_Space_FE")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush"))%>%
+  ggplot()+
+  geom_point(aes(x= Observed, y = Prediction))+
+    geom_smooth(aes(x= Observed, y= Prediction), method = "lm", se = FALSE, color = "red")+
+    geom_abline(slope = 1, intercept = 0)+
+  facet_grid(time_of_day~weekend)+
+  labs(title="Observed vs Predicted",
+       x="Observed trips", 
+       y="Predicted trips")+
+  plotTheme
+```
+
+Seems like these are concentrated in certain areas. We are arriving at better prediction results for weekends than weekdays.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek) ) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression,
+           DayOfWeek) %>%
+    unnest() %>%
+  filter(Regression == "DTime_Space_FE_timeLags")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush")) %>%
+  group_by(Origin.Tract, weekend, time_of_day, StartLongitude, StartLatitude) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+  ggplot(.)+
+  geom_sf(data = LouisvilleCensus, color = "grey", fill = "transparent")+
+  geom_point(aes(x = StartLongitude, y =  StartLatitude, color = MAE), 
+             fill = "transparent", size = 0.5, alpha = 0.6)+
+  scale_colour_viridis(direction = -1,
+  discrete = FALSE, option = "D")+
+  ylim(min(dat_census$ StartLatitude), max(dat_census$StartLatitude))+
+  xlim(min(dat_census$StartLongitude), max(dat_census$StartLongitude))+
+  facet_grid(weekend~time_of_day)+
+  labs(title="Mean Absolute Errors, Test Set")+
+  mapTheme
+
+```
+
+Let’s focus on the morning commute, where station locations probably relate to likely users, who seem to be commuting downtown to the loop. The reg4 model is performing better on weekday mornings than reg3 relative to Med-income. 
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek),
+           Percent_Taking_Public_Trans = map(data, pull, Percent_Taking_Public_Trans),
+           Med_Inc = map(data, pull, Med_Inc),
+           Percent_White = map(data, pull, Percent_White)) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression,
+            DayOfWeek , Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+    unnest() %>%
+  filter(Regression == "CTime_Space_FE")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush")) %>%
+  filter(time_of_day == "AM Rush") %>%
+  group_by(Origin.Tract, Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+  gather(-Origin.Tract, -MAE, key = "variable", value = "value")%>%
+  ggplot(.)+
+  #geom_sf(data = chicagoCensus, color = "grey", fill = "transparent")+
+  geom_point(aes(x = value, y = MAE), alpha = 0.5)+
+  geom_smooth(aes(x = value, y = MAE), method = "lm", se= FALSE)+
+  facet_wrap(~variable, scales = "free")+
+  labs(title="Errors as a function of socio-economic variables",
+       y="Mean Absolute Error (Trips)")+
+  plotTheme
+
+```
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek),
+           Percent_Taking_Public_Trans = map(data, pull, Percent_Taking_Public_Trans),
+           Med_Inc = map(data, pull, Med_Inc),
+           Percent_White = map(data, pull, Percent_White)) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression,
+            DayOfWeek , Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+    unnest() %>%
+  filter(Regression == "DTime_Space_FE_timeLags")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush")) %>%
+  filter(time_of_day == "AM Rush") %>%
+  group_by(Origin.Tract, Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+  gather(-Origin.Tract, -MAE, key = "variable", value = "value")%>%
+  ggplot(.)+
+  geom_point(aes(x = value, y = MAE), alpha = 0.5)+
+  geom_smooth(aes(x = value, y = MAE), method = "lm", se= FALSE)+
+  facet_wrap(~variable, scales = "free")+
+  labs(title="Errors as a function of socio-economic variables",
+       y="Mean Absolute Error (Trips)")+
+  plotTheme
+
+```
+
+Let’s also take a look at the evening commute. The reg4 model is also performing better on weekday mornings than reg3 relative to Med-income. 
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek),
+           Percent_Taking_Public_Trans = map(data, pull, Percent_Taking_Public_Trans),
+           Med_Inc = map(data, pull, Med_Inc),
+           Percent_White = map(data, pull, Percent_White)) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression,
+            DayOfWeek , Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+    unnest() %>%
+  filter(Regression == "CTime_Space_FE")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush")) %>%
+  filter(time_of_day == "PM Rush") %>%
+  group_by(Origin.Tract, Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+  gather(-Origin.Tract, -MAE, key = "variable", value = "value")%>%
+  ggplot(.)+
+  #geom_sf(data = chicagoCensus, color = "grey", fill = "transparent")+
+  geom_point(aes(x = value, y = MAE), alpha = 0.5)+
+  geom_smooth(aes(x = value, y = MAE), method = "lm", se= FALSE)+
+  facet_wrap(~variable, scales = "free")+
+  labs(title="Errors as a function of socio-economic variables",
+       y="Mean Absolute Error (Trips)")+
+  plotTheme
+
+```
+
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+week_predictions %>% 
+    mutate(interval60 = map(data, pull, interval60),
+           Origin.Tract = map(data, pull, Origin.Tract), 
+           StartLatitude = map(data, pull, StartLatitude), 
+           StartLongitude = map(data, pull, StartLongitude),
+           DayOfWeek = map(data, pull, DayOfWeek),
+           Percent_Taking_Public_Trans = map(data, pull, Percent_Taking_Public_Trans),
+           Med_Inc = map(data, pull, Med_Inc),
+           Percent_White = map(data, pull, Percent_White)) %>%
+    select(interval60, Origin.Tract, StartLongitude, 
+           StartLatitude, Observed, Prediction, Regression,
+            DayOfWeek , Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+    unnest() %>%
+  filter(Regression == "DTime_Space_FE_timeLags")%>%
+  mutate(weekend = ifelse(DayOfWeek %in% c(6,7), "Weekend", "Weekday"),
+         time_of_day = case_when(hour(interval60) < 7 | hour(interval60) > 18 ~ "Overnight",
+                                 hour(interval60) >= 7 & hour(interval60) < 10 ~ "AM Rush",
+                                 hour(interval60) >= 10 & hour(interval60) < 15 ~ "Mid-Day",
+                                 hour(interval60) >= 15 & hour(interval60) <= 18 ~ "PM Rush")) %>%
+  filter(time_of_day == "PM Rush") %>%
+  group_by(Origin.Tract, Percent_Taking_Public_Trans, Med_Inc, Percent_White) %>%
+  summarize(MAE = mean(abs(Observed-Prediction), na.rm = TRUE))%>%
+  gather(-Origin.Tract, -MAE, key = "variable", value = "value")%>%
+  ggplot(.)+
+  geom_point(aes(x = value, y = MAE), alpha = 0.5)+
+  geom_smooth(aes(x = value, y = MAE), method = "lm", se= FALSE)+
+  facet_wrap(~variable, scales = "free")+
+  labs(title="Errors as a function of socio-economic variables",
+       y="Mean Absolute Error (Trips)")+
+  plotTheme
+
+```
+
+##Real-Time Data
+
+Let's take a further look at the real-time data from Lime (9 am Nov,19th 2019). We can see that most available scooters are in Downtown area.
+
+```{r, echo=TRUE, collapse = TRUE,  message=FALSE}
+library(jsonlite)
+json_file <- "/Users/zixiliu/Downloads/lime-9-07.json"
+json_data <- fromJSON("/Users/zixiliu/Downloads/lime-9-07.json",flatten=TRUE)
+lime <- json_data$data$bikes
+lime$lat = as.numeric(lime$lat)
+lime$lon = as.numeric(lime$lon)
+library("ggmap")
+ggmap::register_google(key = "AIzaSyBCq2wrXoVXnzy5BY6QmEbBn2cW7DfyUVs")
+louisville <- c(left = -85.9, bottom =38.15, right =  -85.55, top = 38.3)
+get_stamenmap(louisville, zoom = 12, maptype = "toner-lite") %>% ggmap() + 
+  geom_point(aes(x = lon, y = lat, color = count), data = lime %>% select(-bike_id)  %>% mutate(count = 1)%>% group_by(lon,lat) %>% summarize(count = sum(count)) , size = 0.8) +
+  scale_colour_viridis(direction = -1,
+  discrete = FALSE, option = "D")+ labs(title="Lime Free Scooter Status in Lousiville. 9 am - Nov 19, 2019") +
+  theme(legend.position="bottom") 
+
+```
+
+
+##Interpretations
+
+Based on our time-series plots, we can see that we are able to track the time components of demand, but we miss the peaks, and underpredict for periods of high demand. Based on subsequent maps of our errors, we can see that these peaks seem to have some spatial or demographic pattern to them. It seems that underserved areas are in Downtown and from the graph above, we can see that Lime has most of its available scooters in Downtown area.
+
+In terms of generalizeability, we can see that reg4 is performing better than reg3 even though reg3 may reach better prediction results. From an operations perspective, the problem with underpredicting for high demand lies in weekday commute. As we can see from the time-series plot, we miss the peaks which are mainly during weekdays. This is probably because there is more variation on weekday commutes such as road closures, traffic conjestion and public events(marathons) etc.
+
+In order to depress the errors, there are some next steps such as collecting more real-time data from scooter company's API such as Bird, Lime, and Spin. We can also compute Global Moran's I or Local Moran's I for trip volume to identify differences in spatial autocorrelation. In that case, we can spatially explore them further to understand where we are predicting poorly.
+
+We can also add information such as school districts and education level to our model. Intuitively, university students and people with higher education are more likely to use scooter. We may be able to better capture the peaks if we include more information with the fishnet.
+
+
