@@ -1,0 +1,18 @@
+name: "cars"
+output_dir: "docs"
+navbar:
+  title: "Scooter_Louisville"
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+   href: Scooter_Louisville.html
+output:
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
